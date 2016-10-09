@@ -1,196 +1,83 @@
+#include <Adafruit_NeoPixel.h>
 #include <PulsePosition.h>
 #include <Servo.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BNO055.h>
-#include <utility/imumaths.h>
-#include <PID_v1.h>
+
+
 
 //Trim for RC Inputs
 const int rcMin = 1100;
-const int rcMax = 1920;
+const int rcMax = 1900;
 int rcScale = rcMax - rcMin;
+#define FAILSAFE false //Failsafe is disabled for now
 
-int count=0;
-//Channels from the transmitter!
+//Create some global variables to store the state of RC Reciver Channels
 double rc1 = 0;
 double rc2 = 0;
 double rc3 = 0;
 double rc4 = 0;
 double rc5 = 0;
 double rc6 = 0;
+
+//Define the PPM decoder object
 PulsePositionInput myIn;
 
-
+//Define the ports that control the motors
 //Motor Driver Outputs
-#define MOTLF 3
-#define MOTLR 4
-#define MOTRF 5
-#define MOTRR 6
+#define LEFTTHROTTLE 21
+#define LEFTDIRECTION 19
+#define RIGHTTHROTTLE 22
+#define RIGHTDIRECTION 16
+#define WEAPONTHROTTLE 23
+#define WEAPONDIRECTION 18
 
-//AHRS Vars
-#define BNO055_SAMPLERATE_DELAY_MS (10)
-Adafruit_BNO055 bno = Adafruit_BNO055(55,0x28);
-bool inverted = 0;
-double targetHeading = 0;
-double targetBalance = 5;
-
-//Define Variables we'll be connecting to
-double consKp=11, consKi=60, consKd=0.20;
-double Setpoint, Input, Output;
-PID myPID(&Input, &Output, &Setpoint, consKp, consKi, consKd, DIRECT);
-//Define the aggressive and conservative Tuning Parameters
+//Define the blinking lights
+Adafruit_NeoPixel leftPixels = Adafruit_NeoPixel(8, 10, NEO_GRBW + NEO_KHZ800);  //LED Count then output Pin
+Adafruit_NeoPixel rightPixels = Adafruit_NeoPixel(8, 3, NEO_GRBW + NEO_KHZ800);
 
 
-double dKp=1.0, dKi=0.05, dKd=.17;
-double driveGoal, driveIn, driveOut;
-PID drivePID(&driveIn, &driveOut, &driveGoal, dKp, dKi, dKd, DIRECT);
+void setup() {
 
-void setup(){
-  Serial.begin(115200);
-  Serial.println("Servos: GOOD");
-  Setpoint = -0.0;
+  myIn.begin(6); // Start reading the data from the RC Reciever on Pin 6
+
+  pinMode(13,OUTPUT); //Just make sure we can use the onboard LED for stuff
+  pinMode(LEFTTHROTTLE, OUTPUT); //Tell the controller we want to use these pins for output
+  pinMode(LEFTDIRECTION, OUTPUT);
+  pinMode(RIGHTTHROTTLE, OUTPUT);
+  pinMode(RIGHTDIRECTION, OUTPUT);
+  pinMode(WEAPONTHROTTLE, OUTPUT);
+  pinMode(WEAPONDIRECTION, OUTPUT);
 
 
-
-  myIn.begin(23);
-
-  myPID.SetOutputLimits(-245, 245);
-  drivePID.SetOutputLimits(-15,15);
-  driveGoal = 0;
-
-  pinMode(13,OUTPUT);
-  pinMode(MOTLF, OUTPUT);
-  pinMode(MOTLR, OUTPUT);
-  pinMode(MOTRF, OUTPUT);
-  pinMode(MOTRR, OUTPUT);
-  Wire.begin();
-  if(!bno.begin())
-  {
-    Serial.println("AHRS: ERROR");
-  }
-  Serial.println("AHRS: Calibrating");
-
-  digitalWrite(13, HIGH);
-  delay(5000);
-  digitalWrite(13, LOW);
-  myPID.SetMode(AUTOMATIC);
-  myPID.SetSampleTime(10);
-  drivePID.SetMode(AUTOMATIC);
-  drivePID.SetSampleTime(10);
+  leftPixels.begin();
+  leftPixels.show(); // Initialize all pixels to 'off'
+  colorFill(leftPixels.Color(0,128,0), leftPixels);
+  rightPixels.begin();
+  rightPixels.show(); // Initialize all pixels to 'off'
+  colorFill(rightPixels.Color(128,0,0), rightPixels);
 
 }
 
-void loop(){
-
+void loop() { //The main program loop;
   updateChannels();
+  int thrust = round(((rc1 - rcMin)/rcScale) * 100) - 50; //Cast to -250-0-250
+  int turn = round(((rc2 - rcMin)/rcScale) * 100) - 50; //Cast to -250-0-250
+  simpleDrive(thrust, turn);
 
-  pidDrive();
-  pidBalance();
-  delay(10);
-//  handlePosition();
-}
-
-void pidDrive(){
-  driveGoal = driveGoal + rc2/10;
-  if (driveGoal < -25){
-    driveGoal = -25;
-  }
-  else if (driveGoal > 25){
-    driveGoal = 25;
-  }
-
-  if (driveIn < -25){
-    driveIn = -25;
-  }
-  else if (driveIn > 25){
-    driveIn = 25;
-  }
-  if (driveIn > 20 && driveGoal > 20){
-    driveIn = driveIn - 20;
-    driveGoal = driveGoal - 20;
-  }
-  if (driveIn < -20 && driveGoal < -20){
-    driveIn = driveIn + 20;
-    driveGoal = driveGoal + 20;
-  }
-
-  drivePID.Compute();
-  Setpoint = driveOut;
 
 }
 
-
-void pidBalance(){
-  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-  double currentAngle = euler.z();
-  Input = currentAngle;
-  myPID.Compute();
-
-  int correctedOut = 0;
-  if (Output > 0){
-    correctedOut = Output + 4;
-  }
-  else if (Output < 0){
-    correctedOut = Output - 4;
-  }
-  else {
-    correctedOut = Output;
-  }
-
-
-  Serial.print(" trgt: ");
-  Serial.print(Setpoint);
-  Serial.print(" cur: ");
-  Serial.print(currentAngle);
-  Serial.print(" resp: ");
-  Serial.print(correctedOut);
-
-  Serial.print(" dG: ");
-  Serial.print(driveGoal);
-  Serial.print(" dI: ");
-  Serial.print(driveIn);
-
-  Serial.print(" RC State: ");
-  Serial.print(rc1);
-  Serial.print(" ");
-  Serial.print(rc2);
-  Serial.print(" ");
-  Serial.print(rc3);
-  Serial.print(" ");
-  Serial.print(rc4);
-  Serial.print(" ");
-  Serial.print(rc5);
-  Serial.print(" ");
-  Serial.print(rc6);
-  Serial.println(" ");
-
-
-
-  if (currentAngle > 60 || currentAngle < -60){
-    simpleDrive(0,0);
-    driveGoal = 0.0;
-    driveIn = 0.0; //Reset drive delta;
-
-  }
-  else {
-    if (rc1 < 5 && rc1 > -5){ //Don't apply drive corrections during steering
-      driveIn = driveIn + ((correctedOut * -1) / 1000.0);
-    } else {
-      driveIn = driveIn + (((correctedOut * -1) / 1000.0) / (rc1 / 2)); //Apply them slightly less depending on steering strength.
-    }
-    simpleDrive((correctedOut * -1), rc1 * -1);
-  }
-
-}
-
-
+//This function does the steering interpretation from 2 channels.
+//Thrust is how fast you want to go. +255 max forward -255 is max reverse
+//Turn is how hard do you want to turn.
 void simpleDrive(double thrust, double turn){
   int left = 0;
   int right = 0;
 
+  //This is where the turning logic is.. That's it.
   left = thrust + turn;
   right = thrust - turn;
 
+  //Safety checks!
   if (left > 255){
     left = 255;
   }
@@ -198,21 +85,18 @@ void simpleDrive(double thrust, double turn){
     left = -255;
   }
 
+  //If the left motor needs to go forward.
   if (left > 0){
-    // analogWrite(MOTLF, left);
-    // digitalWrite(MOTLR, 0);
+    analogWrite(LEFTTHROTTLE, left);
+    digitalWrite(LEFTDIRECTION, 0);
 
-    analogWrite(MOTLF, left);
-    analogWrite(MOTLR, 0);
-
-  } else {
-    analogWrite(MOTLF, left * -1);
-    digitalWrite(MOTLR, 1);
-
-    // analogWrite(MOTLF, 0);
-    // analogWrite(MOTLR, left * -1);
+  } else { //Left motor needs to spin backward
+    analogWrite(LEFTTHROTTLE, left * -1); //Flip the speed to positive
+    digitalWrite(LEFTDIRECTION, 1);
   }
 
+
+  //Same thing for the right side
   if (right > 255){
     right = 255;
   }
@@ -221,62 +105,86 @@ void simpleDrive(double thrust, double turn){
   }
 
   if (right > 0){
-    analogWrite(MOTRF, right);
-    digitalWrite(MOTRR, 0);
-
-    // analogWrite(MOTRF, right);
-    // analogWrite(MOTRR, 0);
+    analogWrite(RIGHTTHROTTLE, left);
+    digitalWrite(RIGHTDIRECTION, 0);
 
   } else {
-    analogWrite(MOTRF, right * -1);
-    digitalWrite(MOTRR, 1);
-
-    // analogWrite(MOTRF, 0);
-    // analogWrite(MOTRR, right * -1);
+    analogWrite(RIGHTTHROTTLE, left * -1); //Flip the speed to positive
+    digitalWrite(RIGHTDIRECTION, 1);
   }
-}
-
-
-void handlePosition(){
-  /* Display the floating point data */
-  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-  Serial.print("X: ");
-  Serial.print(euler.x());
-  Serial.print(" Y: ");
-  Serial.print(euler.y());
-  Serial.print(" Z: ");
-  Serial.print(euler.z());
-  Serial.print(" ");
-  if (abs(euler.z()) > 100 ){
-      inverted = 0;
-  } else {
-      inverted = 1;
-  }
-
 }
 
 void updateChannels(){
   int num = myIn.available();
   if (num > 0) {
-    rc1 = round(((myIn.read(1) - rcMin)/rcScale) * 150) - 75; //Cast to -250-0-250
-    rc2 = round(((myIn.read(2) - rcMin)/rcScale) * 4) - 2; //Cast to -250-0-250
-//  rc1 = myIn.read(1);
-//  rc2 = myIn.read(2);
-
+    // rc1 = round(((myIn.read(1) - rcMin)/rcScale) * 100) - 50; //Cast to -250-0-250
+    // rc2 = round(((myIn.read(2) - rcMin)/rcScale) * 4) - 2; //Cast to -250-0-250
+    rc1 = myIn.read(1);
+    rc2 = myIn.read(2);
     rc3 = myIn.read(3);
     rc4 = myIn.read(4);
     rc5 = myIn.read(5);
-    rc6 = 15 - myIn.read(6)/100.0 ;
+    rc6 = myIn.read(6);
 
-    if (rc3 > 1800){
+    if (rc6 > 2000 && FAILSAFE){ //Will shutdown is reciever is programed correctly for failsafe
       rc1 = 0;
       rc2 = 0;
       rc3 = 0;
       rc4 = 0;
       rc5 = 0;
       rc6 = 0;
-
     }
   }
+}
 
+
+
+//These functions are for making fun colors!
+
+// Slightly different, this makes the rainbow equally distributed throughout
+void rainbowCycle(uint8_t wait) {
+  uint16_t i, j;
+
+  for(j=0; j<256*5; j++) { // 5 cycles of all colors on wheel
+    for(i=0; i< leftPixels.numPixels(); i++) {
+      leftPixels.setPixelColor(i, Wheel(((i * 256 / leftPixels.numPixels()) + j) & 255));
+      rightPixels.setPixelColor(i, Wheel(((i * 256 / leftPixels.numPixels()) + j) & 255));
+    }
+    leftPixels.show();
+    rightPixels.show();
+    delay(wait);
+  }
+}
+
+
+// Fill the dots one after the other with a color
+void colorWipe(uint32_t c, uint8_t wait, Adafruit_NeoPixel strip) {
+  for(uint16_t i=0; i<strip.numPixels(); i++) {
+    strip.setPixelColor(i, c);
+    strip.show();
+    delay(wait);
+  }
+}
+
+// Fill the dots one after the other with a color
+void colorFill(uint32_t c, Adafruit_NeoPixel strip) {
+  for(uint16_t i=0; i<strip.numPixels(); i++) {
+    strip.setPixelColor(i, c);
+  }
+  strip.show();
+}
+
+// Input a value 0 to 255 to get a color value.
+// The colours are a transition r - g - b - back to r.
+uint32_t Wheel(byte WheelPos) {
+  WheelPos = 255 - WheelPos;
+  if(WheelPos < 85) {
+    return leftPixels.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+  }
+  if(WheelPos < 170) {
+    WheelPos -= 85;
+    return leftPixels.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+  }
+  WheelPos -= 170;
+  return leftPixels.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
 }
