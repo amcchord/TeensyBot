@@ -10,6 +10,7 @@ const int rcMax = 1920;
 int rcScale = rcMax - rcMin;
 #define FAILSAFE false //Failsafe is disabled for now
 #define DEADBAND 10 //If thrust values are within +/-10 of 0 assume they are 0
+#define REJECTTHRESH 2200 //Rc values above this number are considered invalid
 
 //Create some global variables to store the state of RC Reciver Channels
 double rc1 = 0; // Turn
@@ -35,6 +36,9 @@ PulsePositionInput myIn;
 Adafruit_NeoPixel leftPixels = Adafruit_NeoPixel(8, 10, NEO_GRBW + NEO_KHZ800);  //LED Count then output Pin
 Adafruit_NeoPixel rightPixels = Adafruit_NeoPixel(8, 3, NEO_GRBW + NEO_KHZ800);
 
+//Some globals for handling mode switching
+int lastMode = 0;
+int pixelTicker = 0;
 
 void setup() {
 
@@ -63,10 +67,9 @@ void setup() {
 
   leftPixels.begin();
   leftPixels.show(); // Initialize all pixels to 'off'
-  colorFill(leftPixels.Color(0,128,0), leftPixels);
   rightPixels.begin();
   rightPixels.show(); // Initialize all pixels to 'off'
-  colorFill(rightPixels.Color(128,0,0), rightPixels);
+
 
 }
 
@@ -78,6 +81,8 @@ void loop() { //The main program loop;
   int turn = round(((rc1 - rcMin)/rcScale) * 500) - 250; //Cast to -250-0-250
   int weapon = round(((rc3 - rcMin)/rcScale) * 250); //Cast to 0-250
   int direction = round(((rc4 - rcMin)/rcScale) * 10) - 5; //Cast to -5-0-5;
+  int ledMode = round(((rc5 - rcMin)/rcScale) * 6);
+
 
   //Apply Deadband
   if (thrust < DEADBAND && thrust > (DEADBAND * -1)){
@@ -98,14 +103,17 @@ void loop() { //The main program loop;
   Serial.print(" Weapon: ");
   Serial.print(weapon);
   Serial.print(" Direction: ");
-  Serial.println(direction);
+  Serial.print(direction);
+  Serial.print(" LedMode: ");
+  Serial.println(ledMode);
 
   simpleDrive(thrust, turn);
   weaponControl(weapon, direction);
+  ledMagic(ledMode);
 
 }
 
-//Controls the speed data to the weapon speed controller. 
+//Controls the speed data to the weapon speed controller.
 void weaponControl(int speed, int direction){
   if (direction < 0){ //Set direction based on positive or negative
     speed = speed * -1;
@@ -128,8 +136,6 @@ void weaponControl(int speed, int direction){
 void simpleDrive(double thrust, double turn){
   int left = 0;
   int right = 0;
-
-
 
   //This is where the turning logic is.. That's it.
   left = thrust + turn;
@@ -173,14 +179,36 @@ void simpleDrive(double thrust, double turn){
 }
 
 void updateChannels(){
+
   int num = myIn.available();
   if (num > 0) {
-    rc1 = myIn.read(1);
-    rc2 = myIn.read(2);
-    rc3 = myIn.read(3);
-    rc4 = myIn.read(4);
-    rc5 = myIn.read(5);
-    rc6 = myIn.read(6);
+
+    int rc1t = myIn.read(1);
+    int rc2t = myIn.read(2);
+    int rc3t = myIn.read(3);
+    int rc4t = myIn.read(4);
+    int rc5t = myIn.read(5);
+    int rc6t = myIn.read(6);
+
+    //Don't register weird outliers!
+    if (rc1t > 0 && rc1t < REJECTTHRESH){
+      rc1 = rc1t;
+    }
+    if (rc2t > 0 && rc2t < REJECTTHRESH){
+      rc2 = rc2t;
+    }
+    if (rc3t > 0 && rc3t < REJECTTHRESH){
+      rc3 = rc3t;
+    }
+    if (rc4t > 0 && rc4t < REJECTTHRESH){
+      rc4 = rc4t;
+    }
+    if (rc5t > 0 && rc5t < REJECTTHRESH){
+      rc5 = rc5t;
+    }
+    if (rc6t > 0 && rc6t < REJECTTHRESH){
+      rc6 = rc6t;
+    }
 
     if (rc6 > 2000 && FAILSAFE){ //Will shutdown is reciever is programed correctly for failsafe
       rc1 = 0;
@@ -194,31 +222,87 @@ void updateChannels(){
 }
 
 
+void ledMagic(int mode){
+  if (mode == 0 && mode != lastMode){ //Turn the lights off!
+    leftPixels.begin();
+    rightPixels.begin();
+    colorFill(leftPixels.Color(0,0,0,0), leftPixels);
+    colorFill(rightPixels.Color(0,0,0,0), rightPixels);
+  }
+  if (mode == 1 && mode != lastMode){ //Turn the lights off!
+    leftPixels.begin();
+    rightPixels.begin();
+    colorFill(leftPixels.Color(0,0,0,255), leftPixels);
+    colorFill(rightPixels.Color(0,0,0,255), rightPixels);
+  }
 
-//These functions are for making fun colors!
+  if (mode == 2){ //Turn the lights off!
+    leftPixels.begin();
+    rightPixels.begin();
+    colorFill(Wheel(round(((rc2 - rcMin)/rcScale) * 250)), leftPixels);
+    colorFill(Wheel(round(((rc2 - rcMin)/rcScale) * 250)), rightPixels);
+  }
 
-// Slightly different, this makes the rainbow equally distributed throughout
-void rainbowCycle(uint8_t wait) {
-  uint16_t i, j;
 
-  for(j=0; j<256*5; j++) { // 5 cycles of all colors on wheel
-    for(i=0; i< leftPixels.numPixels(); i++) {
-      leftPixels.setPixelColor(i, Wheel(((i * 256 / leftPixels.numPixels()) + j) & 255));
-      rightPixels.setPixelColor(i, Wheel(((i * 256 / leftPixels.numPixels()) + j) & 255));
+  else if (mode == 3){ //Rainbow Wheel!
+    leftPixels.begin();
+    rightPixels.begin();
+    for(int i=0; i< leftPixels.numPixels(); i++) {
+      if (pixelTicker % leftPixels.numPixels() == i){
+          leftPixels.setPixelColor(i, Wheel(pixelTicker));
+      }
+      else {
+          leftPixels.setPixelColor(i, leftPixels.Color(0,0,0));
+      }
+    }
+    leftPixels.show();
+    for(int i=0; i< rightPixels.numPixels(); i++) {
+      if (pixelTicker % rightPixels.numPixels()  == i){
+          rightPixels.setPixelColor(i, Wheel(pixelTicker));
+      }
+      else {
+          rightPixels.setPixelColor(i, rightPixels.Color(0,0,0));
+      }
+    }
+    rightPixels.show();
+
+  }
+  else if (mode == 4){ //Rainbow Wheel!
+    leftPixels.begin();
+    rightPixels.begin();
+    colorFill(Wheel(pixelTicker*4), leftPixels);
+    colorFill(Wheel(pixelTicker*4), rightPixels);
+  }
+  else if (mode == 5){ //Rainbow Wheel!
+    leftPixels.begin();
+    rightPixels.begin();
+    colorFill(Wheel(pixelTicker*4), leftPixels);
+    colorFill(Wheel(pixelTicker*-4), rightPixels);
+  }
+  else if (mode == 6){ //Rainbow Wheel!
+    leftPixels.begin();
+    rightPixels.begin();
+    for(int i=0; i< leftPixels.numPixels(); i++) {
+      leftPixels.setPixelColor(i, Wheel(((i * 256 / leftPixels.numPixels()) + pixelTicker*3) & 255));
+    }
+    for(int i=0; i< rightPixels.numPixels(); i++) {
+      rightPixels.setPixelColor(i, Wheel(((i * 256 / rightPixels.numPixels()) + pixelTicker*3) & 255));
     }
     leftPixels.show();
     rightPixels.show();
-    delay(wait);
   }
-}
 
 
-// Fill the dots one after the other with a color
-void colorWipe(uint32_t c, uint8_t wait, Adafruit_NeoPixel strip) {
-  for(uint16_t i=0; i<strip.numPixels(); i++) {
-    strip.setPixelColor(i, c);
-    strip.show();
-    delay(wait);
+
+  lastMode = mode;
+  pixelTicker++;
+  if (pixelTicker > 256){
+    pixelTicker = 0;
+  }
+
+  //NeoPixel Pushing makes a mess of the PPM timers.. so we can use this trick to reset them.
+  if (lastMode != 1 && lastMode != 0){
+    delay(30);
   }
 }
 
