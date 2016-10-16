@@ -84,7 +84,7 @@ void loop() { //The main program loop;
   int ledMode = round(((rc5 - rcMin)/rcScale) * 6);
 
 
-  //Apply Deadband
+  //Apply Deadband Correction
   if (thrust < DEADBAND && thrust > (DEADBAND * -1)){
     thrust = 0;
   }
@@ -95,7 +95,7 @@ void loop() { //The main program loop;
     weapon = 0;
   }
 
-
+  //If we have a serial port attached we can debug our inputs.
   Serial.print("Thrust: ");
   Serial.print(thrust);
   Serial.print(" Turn: ");
@@ -106,6 +106,7 @@ void loop() { //The main program loop;
   Serial.print(direction);
   Serial.print(" LedMode: ");
   Serial.println(ledMode);
+
 
   simpleDrive(thrust, turn);
   weaponControl(weapon, direction);
@@ -178,6 +179,7 @@ void simpleDrive(double thrust, double turn){
   }
 }
 
+//Read in the channels from the RC reciver
 void updateChannels(){
 
   int num = myIn.available();
@@ -221,7 +223,7 @@ void updateChannels(){
   }
 }
 
-
+//Make the dual NeoPixel Strips do stuff!
 void ledMagic(int mode){
   if (mode == 0 && mode != lastMode){ //Turn the lights off!
     leftPixels.begin();
@@ -229,14 +231,14 @@ void ledMagic(int mode){
     colorFill(leftPixels.Color(0,0,0,0), leftPixels);
     colorFill(rightPixels.Color(0,0,0,0), rightPixels);
   }
-  if (mode == 1 && mode != lastMode){ //Turn the lights off!
+  if (mode == 1 && mode != lastMode){ //Turn the lights white!
     leftPixels.begin();
     rightPixels.begin();
     colorFill(leftPixels.Color(0,0,0,255), leftPixels);
     colorFill(rightPixels.Color(0,0,0,255), rightPixels);
   }
 
-  if (mode == 2){ //Turn the lights off!
+  if (mode == 2){ //Set the color of the lights based on the throttle.
     leftPixels.begin();
     rightPixels.begin();
     colorFill(Wheel(round(((rc2 - rcMin)/rcScale) * 250)), leftPixels);
@@ -244,7 +246,7 @@ void ledMagic(int mode){
   }
 
 
-  else if (mode == 3){ //Rainbow Wheel!
+  else if (mode == 3){ //Rainbow Flashers
     leftPixels.begin();
     rightPixels.begin();
     for(int i=0; i< leftPixels.numPixels(); i++) {
@@ -267,13 +269,13 @@ void ledMagic(int mode){
     rightPixels.show();
 
   }
-  else if (mode == 4){ //Rainbow Wheel!
+  else if (mode == 4){ //Syncronized Rainbow Pulse!
     leftPixels.begin();
     rightPixels.begin();
     colorFill(Wheel(pixelTicker*4), leftPixels);
     colorFill(Wheel(pixelTicker*4), rightPixels);
   }
-  else if (mode == 5){ //Rainbow Wheel!
+  else if (mode == 5){ //Desyncronized Raindbow Pulse
     leftPixels.begin();
     rightPixels.begin();
     colorFill(Wheel(pixelTicker*4), leftPixels);
