@@ -5,18 +5,19 @@
 
 
 //Trim for RC Inputs
-const int rcMin = 1100;
-const int rcMax = 1900;
+const int rcMin = 1099;
+const int rcMax = 1920;
 int rcScale = rcMax - rcMin;
 #define FAILSAFE false //Failsafe is disabled for now
+#define DEADBAND 10 //If thrust values are within +/-10 of 0 assume they are 0
 
 //Create some global variables to store the state of RC Reciver Channels
-double rc1 = 0;
-double rc2 = 0;
-double rc3 = 0;
-double rc4 = 0;
-double rc5 = 0;
-double rc6 = 0;
+double rc1 = 0; // Turn
+double rc2 = 0; // Thrust
+double rc3 = 0; // Weapon Power
+double rc4 = 0; // Weapon Directon
+double rc5 = 0; // RainbowMode!
+double rc6 = 0; // Failsafe (Not used yet)
 
 //Define the PPM decoder object
 PulsePositionInput myIn;
@@ -38,6 +39,7 @@ Adafruit_NeoPixel rightPixels = Adafruit_NeoPixel(8, 3, NEO_GRBW + NEO_KHZ800);
 void setup() {
 
   myIn.begin(6); // Start reading the data from the RC Reciever on Pin 6
+  Serial.begin(9600);
 
   pinMode(13,OUTPUT); //Just make sure we can use the onboard LED for stuff
   pinMode(LEFTTHROTTLE, OUTPUT); //Tell the controller we want to use these pins for output
@@ -47,6 +49,17 @@ void setup() {
   pinMode(WEAPONTHROTTLE, OUTPUT);
   pinMode(WEAPONDIRECTION, OUTPUT);
 
+  analogWrite(LEFTTHROTTLE, 0);
+  digitalWrite(LEFTDIRECTION, 0);
+  analogWrite(RIGHTTHROTTLE, 0);
+  digitalWrite(RIGHTDIRECTION, 0);
+
+
+  //Lets wait 1 second everything to come online and be ready before hitting the main loop
+  //This delay prevents motor jerk at power up and should reduce connector sparking
+  digitalWrite(13, HIGH);
+  delay(1000);
+  digitalWrite(13, LOW);
 
   leftPixels.begin();
   leftPixels.show(); // Initialize all pixels to 'off'
@@ -59,12 +72,55 @@ void setup() {
 
 void loop() { //The main program loop;
   updateChannels();
-  int thrust = round(((rc1 - rcMin)/rcScale) * 100) - 50; //Cast to -250-0-250
-  int turn = round(((rc2 - rcMin)/rcScale) * 100) - 50; //Cast to -250-0-250
-  simpleDrive(thrust, turn);
 
+  //Scale the raw RC input
+  int thrust = round(((rc2 - rcMin)/rcScale) * 500) - 250; //Cast to -250-0-250
+  int turn = round(((rc1 - rcMin)/rcScale) * 500) - 250; //Cast to -250-0-250
+  int weapon = round(((rc3 - rcMin)/rcScale) * 250); //Cast to 0-250
+  int direction = round(((rc4 - rcMin)/rcScale) * 10) - 5; //Cast to -5-0-5;
+
+  //Apply Deadband
+  if (thrust < DEADBAND && thrust > (DEADBAND * -1)){
+    thrust = 0;
+  }
+  if (turn < DEADBAND && turn > (DEADBAND * -1)){
+    turn = 0;
+  }
+  if (weapon < DEADBAND){
+    weapon = 0;
+  }
+
+
+  Serial.print("Thrust: ");
+  Serial.print(thrust);
+  Serial.print(" Turn: ");
+  Serial.print(turn);
+  Serial.print(" Weapon: ");
+  Serial.print(weapon);
+  Serial.print(" Direction: ");
+  Serial.println(direction);
+
+  simpleDrive(thrust, turn);
+  weaponControl(weapon, direction);
 
 }
+
+//Controls the speed data to the weapon speed controller. 
+void weaponControl(int speed, int direction){
+  if (direction < 0){ //Set direction based on positive or negative
+    speed = speed * -1;
+  }
+  if (speed > 0){
+    analogWrite(WEAPONTHROTTLE, speed);
+    digitalWrite(WEAPONDIRECTION, 0);
+
+  } else { //Left motor needs to spin backward
+    analogWrite(WEAPONTHROTTLE, speed * -1); //Flip the speed to positive
+    digitalWrite(WEAPONDIRECTION, 1);
+  }
+
+}
+
 
 //This function does the steering interpretation from 2 channels.
 //Thrust is how fast you want to go. +255 max forward -255 is max reverse
@@ -72,6 +128,8 @@ void loop() { //The main program loop;
 void simpleDrive(double thrust, double turn){
   int left = 0;
   int right = 0;
+
+
 
   //This is where the turning logic is.. That's it.
   left = thrust + turn;
@@ -105,11 +163,11 @@ void simpleDrive(double thrust, double turn){
   }
 
   if (right > 0){
-    analogWrite(RIGHTTHROTTLE, left);
+    analogWrite(RIGHTTHROTTLE, right);
     digitalWrite(RIGHTDIRECTION, 0);
 
   } else {
-    analogWrite(RIGHTTHROTTLE, left * -1); //Flip the speed to positive
+    analogWrite(RIGHTTHROTTLE, right * -1); //Flip the speed to positive
     digitalWrite(RIGHTDIRECTION, 1);
   }
 }
@@ -117,8 +175,6 @@ void simpleDrive(double thrust, double turn){
 void updateChannels(){
   int num = myIn.available();
   if (num > 0) {
-    // rc1 = round(((myIn.read(1) - rcMin)/rcScale) * 100) - 50; //Cast to -250-0-250
-    // rc2 = round(((myIn.read(2) - rcMin)/rcScale) * 4) - 2; //Cast to -250-0-250
     rc1 = myIn.read(1);
     rc2 = myIn.read(2);
     rc3 = myIn.read(3);
