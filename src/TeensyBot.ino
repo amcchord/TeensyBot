@@ -32,6 +32,11 @@ PulsePositionInput myIn;
 #define WEAPONTHROTTLE 23
 #define WEAPONDIRECTION 18
 
+//Using a speedcontroller instead
+#define WEAPONSERVO 23
+Servo myservo;  
+
+
 //Define the blinking lights
 Adafruit_NeoPixel leftPixels = Adafruit_NeoPixel(8, 10, NEO_GRBW + NEO_KHZ800);  //LED Count then output Pin
 Adafruit_NeoPixel rightPixels = Adafruit_NeoPixel(8, 3, NEO_GRBW + NEO_KHZ800);
@@ -50,8 +55,14 @@ void setup() {
   pinMode(LEFTDIRECTION, OUTPUT);
   pinMode(RIGHTTHROTTLE, OUTPUT);
   pinMode(RIGHTDIRECTION, OUTPUT);
-  pinMode(WEAPONTHROTTLE, OUTPUT);
-  pinMode(WEAPONDIRECTION, OUTPUT);
+
+
+  //We don't need these because we are using a ESC
+  // pinMode(WEAPONTHROTTLE, OUTPUT);
+  // pinMode(WEAPONDIRECTION, OUTPUT);
+
+
+   myservo.attach(23);
 
   analogWrite(LEFTTHROTTLE, 0);
   digitalWrite(LEFTDIRECTION, 0);
@@ -79,7 +90,7 @@ void loop() { //The main program loop;
   //Scale the raw RC input
   int thrust = round(((rc2 - rcMin)/rcScale) * 500) - 250; //Cast to -250-0-250
   int turn = round(((rc1 - rcMin)/rcScale) * 500) - 250; //Cast to -250-0-250
-  int weapon = round(((rc3 - rcMin)/rcScale) * 250); //Cast to 0-250
+  int weapon = round(((rc3 - rcMin)/rcScale) * 180); //Cast to 0-180 //We are using the servo library here
   int direction = round(((rc4 - rcMin)/rcScale) * 10) - 5; //Cast to -5-0-5;
   int ledMode = round(((rc5 - rcMin)/rcScale) * 6);
 
@@ -109,7 +120,8 @@ void loop() { //The main program loop;
 
 
   simpleDrive(thrust, turn);
-  weaponControl(weapon, direction);
+  //weaponControl(weapon, direction);
+  myservo.write(weapon);
   ledMagic(ledMode);
 
 }
