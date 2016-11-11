@@ -1,7 +1,10 @@
 #include <Adafruit_NeoPixel.h>
 #include <PulsePosition.h>
 #include <Servo.h>
-
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
+#include <PID_v1.h>
 
 
 //Trim for RC Inputs
@@ -26,15 +29,31 @@ PulsePositionInput myIn;
 //Define the ports that control the motors
 //Motor Driver Outputs
 #define LEFTTHROTTLE 21
-#define LEFTDIRECTION 19
+#define LEFTDIRECTION 14
 #define RIGHTTHROTTLE 22
-#define RIGHTDIRECTION 16
-#define WEAPONTHROTTLE 23
-#define WEAPONDIRECTION 18
+#define RIGHTDIRECTION 15
 
-//Define the blinking lights
-Adafruit_NeoPixel leftPixels = Adafruit_NeoPixel(8, 10, NEO_GRBW + NEO_KHZ800);  //LED Count then output Pin
-Adafruit_NeoPixel rightPixels = Adafruit_NeoPixel(8, 3, NEO_GRBW + NEO_KHZ800);
+
+//AHRS Vars
+#define BNO055_SAMPLERATE_DELAY_MS (10)
+Adafruit_BNO055 bno = Adafruit_BNO055(55,0x28);
+bool inverted = 0;
+double targetHeading = 0;
+double targetBalance = 5;
+
+//Define Variables we'll be connecting to
+double consKp=11, consKi=60, consKd=0.20;
+double Setpoint, Input, Output;
+PID myPID(&Input, &Output, &Setpoint, consKp, consKi, consKd, DIRECT);
+//Define the aggressive and conservative Tuning Parameters
+
+
+double dKp=1.0, dKi=0.05, dKd=.17;
+double driveGoal, driveIn, driveOut;
+PID drivePID(&driveIn, &driveOut, &driveGoal, dKp, dKi, dKd, DIRECT);
+
+
+
 
 //Some globals for handling mode switching
 int lastMode = 0;
@@ -50,26 +69,36 @@ void setup() {
   pinMode(LEFTDIRECTION, OUTPUT);
   pinMode(RIGHTTHROTTLE, OUTPUT);
   pinMode(RIGHTDIRECTION, OUTPUT);
-  pinMode(WEAPONTHROTTLE, OUTPUT);
-  pinMode(WEAPONDIRECTION, OUTPUT);
 
   analogWrite(LEFTTHROTTLE, 0);
   digitalWrite(LEFTDIRECTION, 0);
   analogWrite(RIGHTTHROTTLE, 0);
   digitalWrite(RIGHTDIRECTION, 0);
 
+  Wire.begin();
+  if(!bno.begin())
+  {
+    Serial.println("AHRS: ERROR");
+  }
+  Serial.println("AHRS: Calibrating");
 
   //Lets wait 1 second everything to come online and be ready before hitting the main loop
   //This delay prevents motor jerk at power up and should reduce connector sparking
   digitalWrite(13, HIGH);
-  delay(1000);
+  delay(5000);
   digitalWrite(13, LOW);
 
-  leftPixels.begin();
-  leftPixels.show(); // Initialize all pixels to 'off'
-  rightPixels.begin();
-  rightPixels.show(); // Initialize all pixels to 'off'
-
+  // leftPixels.begin();
+  // leftPixels.show(); // Initialize all pixels to 'off'
+  // rightPixels.begin();
+  // rightPixels.show(); // Initialize all pixels to 'off'
+  myPID.SetOutputLimits(-245, 245);
+  drivePID.SetOutputLimits(-15,15);
+  driveGoal = 0;
+  myPID.SetMode(AUTOMATIC);
+  myPID.SetSampleTime(10);
+  drivePID.SetMode(AUTOMATIC);
+  drivePID.SetSampleTime(10);
 
 }
 
@@ -108,28 +137,104 @@ void loop() { //The main program loop;
   Serial.println(ledMode);
 
 
-  simpleDrive(thrust, turn);
-  weaponControl(weapon, direction);
-  ledMagic(ledMode);
+  pidDrive();
+  pidBalance();
+  delay(10);
+
 
 }
 
-//Controls the speed data to the weapon speed controller.
-void weaponControl(int speed, int direction){
-  if (direction < 0){ //Set direction based on positive or negative
-    speed = speed * -1;
-  }
-  if (speed > 0){
-    analogWrite(WEAPONTHROTTLE, speed);
-    digitalWrite(WEAPONDIRECTION, 0);
 
-  } else { //Left motor needs to spin backward
-    analogWrite(WEAPONTHROTTLE, speed * -1); //Flip the speed to positive
-    digitalWrite(WEAPONDIRECTION, 1);
+void pidBalance(){
+  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+  double currentAngle = euler.z();
+  Input = currentAngle;
+  myPID.Compute();
+
+  int correctedOut = 0;
+  if (Output > 0){
+    correctedOut = Output + 4;
+  }
+  else if (Output < 0){
+    correctedOut = Output - 4;
+  }
+  else {
+    correctedOut = Output;
+  }
+
+
+  Serial.print(" trgt: ");
+  Serial.print(Setpoint);
+  Serial.print(" cur: ");
+  Serial.print(currentAngle);
+  Serial.print(" resp: ");
+  Serial.print(correctedOut);
+
+  Serial.print(" dG: ");
+  Serial.print(driveGoal);
+  Serial.print(" dI: ");
+  Serial.print(driveIn);
+
+  Serial.print(" RC State: ");
+  Serial.print(rc1);
+  Serial.print(" ");
+  Serial.print(rc2);
+  Serial.print(" ");
+  Serial.print(rc3);
+  Serial.print(" ");
+  Serial.print(rc4);
+  Serial.print(" ");
+  Serial.print(rc5);
+  Serial.print(" ");
+  Serial.print(rc6);
+  Serial.println(" ");
+
+  if (currentAngle > 60 || currentAngle < -60){
+    simpleDrive(0,0);
+    driveGoal = 0.0;
+    driveIn = 0.0; //Reset drive delta;
+
+  }
+  else {
+    if (rc1 < 5 && rc1 > -5){ //Don't apply drive corrections during steering
+      driveIn = driveIn + ((correctedOut * -1) / 1000.0);
+    } else {
+      driveIn = driveIn + (((correctedOut * -1) / 1000.0) / (rc1 / 2)); //Apply them slightly less depending on steering strength.
+    }
+    simpleDrive((correctedOut * -1), rc1 * -1);
   }
 
 }
 
+
+void pidDrive(){
+  driveGoal = driveGoal + rc2/10;
+  if (driveGoal < -25){
+    driveGoal = -25;
+  }
+  else if (driveGoal > 25){
+    driveGoal = 25;
+  }
+
+  if (driveIn < -25){
+    driveIn = -25;
+  }
+  else if (driveIn > 25){
+    driveIn = 25;
+  }
+  if (driveIn > 20 && driveGoal > 20){
+    driveIn = driveIn - 20;
+    driveGoal = driveGoal - 20;
+  }
+  if (driveIn < -20 && driveGoal < -20){
+    driveIn = driveIn + 20;
+    driveGoal = driveGoal + 20;
+  }
+
+  drivePID.Compute();
+  Setpoint = driveOut;
+
+}
 
 //This function does the steering interpretation from 2 channels.
 //Thrust is how fast you want to go. +255 max forward -255 is max reverse
@@ -221,112 +326,4 @@ void updateChannels(){
       rc6 = 0;
     }
   }
-}
-
-//Make the dual NeoPixel Strips do stuff!
-void ledMagic(int mode){
-  if (mode == 0 && mode != lastMode){ //Turn the lights off!
-    leftPixels.begin();
-    rightPixels.begin();
-    colorFill(leftPixels.Color(0,0,0,0), leftPixels);
-    colorFill(rightPixels.Color(0,0,0,0), rightPixels);
-  }
-  if (mode == 1 && mode != lastMode){ //Turn the lights white!
-    leftPixels.begin();
-    rightPixels.begin();
-    colorFill(leftPixels.Color(0,0,0,255), leftPixels);
-    colorFill(rightPixels.Color(0,0,0,255), rightPixels);
-  }
-
-  if (mode == 2){ //Set the color of the lights based on the throttle.
-    leftPixels.begin();
-    rightPixels.begin();
-    colorFill(Wheel(round(((rc2 - rcMin)/rcScale) * 250)), leftPixels);
-    colorFill(Wheel(round(((rc2 - rcMin)/rcScale) * 250)), rightPixels);
-  }
-
-
-  else if (mode == 3){ //Rainbow Flashers
-    leftPixels.begin();
-    rightPixels.begin();
-    for(int i=0; i< leftPixels.numPixels(); i++) {
-      if (pixelTicker % leftPixels.numPixels() == i){
-          leftPixels.setPixelColor(i, Wheel(pixelTicker));
-      }
-      else {
-          leftPixels.setPixelColor(i, leftPixels.Color(0,0,0));
-      }
-    }
-    leftPixels.show();
-    for(int i=0; i< rightPixels.numPixels(); i++) {
-      if (pixelTicker % rightPixels.numPixels()  == i){
-          rightPixels.setPixelColor(i, Wheel(pixelTicker));
-      }
-      else {
-          rightPixels.setPixelColor(i, rightPixels.Color(0,0,0));
-      }
-    }
-    rightPixels.show();
-
-  }
-  else if (mode == 4){ //Syncronized Rainbow Pulse!
-    leftPixels.begin();
-    rightPixels.begin();
-    colorFill(Wheel(pixelTicker*4), leftPixels);
-    colorFill(Wheel(pixelTicker*4), rightPixels);
-  }
-  else if (mode == 5){ //Desyncronized Raindbow Pulse
-    leftPixels.begin();
-    rightPixels.begin();
-    colorFill(Wheel(pixelTicker*4), leftPixels);
-    colorFill(Wheel(pixelTicker*-4), rightPixels);
-  }
-  else if (mode == 6){ //Rainbow Wheel!
-    leftPixels.begin();
-    rightPixels.begin();
-    for(int i=0; i< leftPixels.numPixels(); i++) {
-      leftPixels.setPixelColor(i, Wheel(((i * 256 / leftPixels.numPixels()) + pixelTicker*3) & 255));
-    }
-    for(int i=0; i< rightPixels.numPixels(); i++) {
-      rightPixels.setPixelColor(i, Wheel(((i * 256 / rightPixels.numPixels()) + pixelTicker*3) & 255));
-    }
-    leftPixels.show();
-    rightPixels.show();
-  }
-
-
-
-  lastMode = mode;
-  pixelTicker++;
-  if (pixelTicker > 256){
-    pixelTicker = 0;
-  }
-
-  //NeoPixel Pushing makes a mess of the PPM timers.. so we can use this trick to reset them.
-  if (lastMode != 1 && lastMode != 0){
-    delay(30);
-  }
-}
-
-// Fill the dots one after the other with a color
-void colorFill(uint32_t c, Adafruit_NeoPixel strip) {
-  for(uint16_t i=0; i<strip.numPixels(); i++) {
-    strip.setPixelColor(i, c);
-  }
-  strip.show();
-}
-
-// Input a value 0 to 255 to get a color value.
-// The colours are a transition r - g - b - back to r.
-uint32_t Wheel(byte WheelPos) {
-  WheelPos = 255 - WheelPos;
-  if(WheelPos < 85) {
-    return leftPixels.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-  }
-  if(WheelPos < 170) {
-    WheelPos -= 85;
-    return leftPixels.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-  }
-  WheelPos -= 170;
-  return leftPixels.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
 }
