@@ -28,10 +28,10 @@ PulsePositionInput myIn;
 
 //Define the ports that control the motors
 //Motor Driver Outputs
-#define LEFTTHROTTLE 21
-#define LEFTDIRECTION 14
-#define RIGHTTHROTTLE 22
-#define RIGHTDIRECTION 15
+#define LEFTTHROTTLE 22
+#define LEFTDIRECTION 15
+#define RIGHTTHROTTLE 23
+#define RIGHTDIRECTION 16
 
 
 //AHRS Vars
@@ -66,7 +66,7 @@ int pixelTicker = 0;
 
 void setup() {
 
-  myIn.begin(23); // Start reading the data from the RC Reciever on Pin 6
+  myIn.begin(6); // Start reading the data from the RC Reciever on Pin 6
   Serial.begin(9600);
 
   pinMode(13,OUTPUT); //Just make sure we can use the onboard LED for stuff
@@ -144,29 +144,30 @@ void loop() { //The main program loop;
   Serial.print(eulerZ);
   Serial.println("");
 
-  if (eulerZ < 45 && eulerZ > -20){
-    //Normal Drive Mode
-    simpleDrive(thrust, turn);
-    if (pidEnabled){
-      disablePID();
-    }
-  }
-  else if (eulerZ > 45 && eulerZ < 135){
-    //Balance Bot Mode;
-    if (!pidEnabled){
-      enablePID();
-    }
-    pidDrive(thrust);
-    pidBalance(turn);
-
-  }
-  else {
-    //Upside Down Mode
-    simpleDrive(thrust * -1, turn * -1);
-    if (pidEnabled){
-      disablePID();
-    }
-  }
+  simpleDrive(thrust, turn);
+  // if (eulerZ < 45 && eulerZ > -20){
+  //   //Normal Drive Mode
+  //   simpleDrive(thrust, turn);
+  //   if (pidEnabled){
+  //     disablePID();
+  //   }
+  // }
+  // else if (eulerZ > 45 && eulerZ < 135){
+  //   //Balance Bot Mode;
+  //   if (!pidEnabled){
+  //     enablePID();
+  //   }
+  //   pidDrive(thrust);
+  //   pidBalance(turn);
+  //
+  // }
+  // else {
+  //   //Upside Down Mode
+  //   simpleDrive(thrust * -1, turn * -1);
+  //   if (pidEnabled){
+  //     disablePID();
+  //   }
+  // }
 
 
 //  pidDrive();
