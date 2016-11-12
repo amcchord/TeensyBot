@@ -97,7 +97,7 @@ void setup() {
   // leftPixels.show(); // Initialize all pixels to 'off'
   // rightPixels.begin();
   // rightPixels.show(); // Initialize all pixels to 'off'
-  myPID.SetOutputLimits(-245, 245);
+  myPID.SetOutputLimits(-145, 145); //Lets try not to blow the gearboxes again
   drivePID.SetOutputLimits(-15,15);
   driveGoal = 0;
   myPID.SetMode(AUTOMATIC);
@@ -210,9 +210,9 @@ void pidBalance(int turn){
 
 
     if (turn < 5 && turn > -5){ //Don't apply drive corrections during steering
-      driveIn = driveIn + ((correctedOut ) / 400.0);
+      driveIn = driveIn - ((correctedOut ) / 400.0);
     } else {
-      driveIn = driveIn + (((correctedOut ) / 400.0) / (turn / 2)); //Apply them slightly less depending on steering strength.
+      driveIn = driveIn - (((correctedOut ) / 400.0) / (turn / 2)); //Apply them slightly less depending on steering strength.
     }
     simpleDrive(correctedOut, turn );
 
@@ -255,6 +255,10 @@ void pidDrive(int thrust){
 void simpleDrive(double thrust, double turn){
   int left = 0;
   int right = 0;
+
+  //We need to invert turn for WozBot
+  turn = turn * -1;
+
 
   //This is where the turning logic is.. That's it.
   left = thrust + turn;
