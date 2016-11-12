@@ -144,30 +144,16 @@ void loop() { //The main program loop;
   Serial.print(eulerZ);
   Serial.println("");
 
-  simpleDrive(thrust, turn);
-  // if (eulerZ < 45 && eulerZ > -20){
-  //   //Normal Drive Mode
-  //   simpleDrive(thrust, turn);
-  //   if (pidEnabled){
-  //     disablePID();
-  //   }
-  // }
-  // else if (eulerZ > 45 && eulerZ < 135){
-  //   //Balance Bot Mode;
-  //   if (!pidEnabled){
-  //     enablePID();
-  //   }
-  //   pidDrive(thrust);
-  //   pidBalance(turn);
-  //
-  // }
-  // else {
-  //   //Upside Down Mode
-  //   simpleDrive(thrust * -1, turn * -1);
-  //   if (pidEnabled){
-  //     disablePID();
-  //   }
-  // }
+  if (eulerZ < 45 && eulerZ > -20){
+    //Upside Down Mode
+    simpleDrive(thrust * -1, turn * -1);
+
+  }
+  else {
+    //Normal Mode
+    simpleDrive(thrust, turn);
+
+  }
 
 
 //  pidDrive();
