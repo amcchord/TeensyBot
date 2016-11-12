@@ -41,8 +41,13 @@ bool inverted = 0;
 double targetHeading = 0;
 double targetBalance = 5;
 
+double eulerX = 0;
+double eulerY = 0;
+double eulerZ = 0;
+
+
 //Define Variables we'll be connecting to
-double consKp=11, consKi=60, consKd=0.20;
+double consKp=9, consKi=60, consKd=0.20;
 double Setpoint, Input, Output;
 PID myPID(&Input, &Output, &Setpoint, consKp, consKi, consKd, DIRECT);
 //Define the aggressive and conservative Tuning Parameters
@@ -52,7 +57,7 @@ double dKp=1.0, dKi=0.05, dKd=.17;
 double driveGoal, driveIn, driveOut;
 PID drivePID(&driveIn, &driveOut, &driveGoal, dKp, dKi, dKd, DIRECT);
 
-
+bool pidEnabled = false;
 
 
 //Some globals for handling mode switching
@@ -61,7 +66,7 @@ int pixelTicker = 0;
 
 void setup() {
 
-  myIn.begin(6); // Start reading the data from the RC Reciever on Pin 6
+  myIn.begin(23); // Start reading the data from the RC Reciever on Pin 6
   Serial.begin(9600);
 
   pinMode(13,OUTPUT); //Just make sure we can use the onboard LED for stuff
@@ -112,6 +117,11 @@ void loop() { //The main program loop;
   int direction = round(((rc4 - rcMin)/rcScale) * 10) - 5; //Cast to -5-0-5;
   int ledMode = round(((rc5 - rcMin)/rcScale) * 6);
 
+  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+  eulerZ = euler.z();
+  eulerX = euler.x();
+  eulerY = euler.y();
+
 
   //Apply Deadband Correction
   if (thrust < DEADBAND && thrust > (DEADBAND * -1)){
@@ -120,43 +130,65 @@ void loop() { //The main program loop;
   if (turn < DEADBAND && turn > (DEADBAND * -1)){
     turn = 0;
   }
-  if (weapon < DEADBAND){
-    weapon = 0;
-  }
 
   //If we have a serial port attached we can debug our inputs.
   Serial.print("Thrust: ");
   Serial.print(thrust);
   Serial.print(" Turn: ");
   Serial.print(turn);
-  Serial.print(" Weapon: ");
-  Serial.print(weapon);
-  Serial.print(" Direction: ");
-  Serial.print(direction);
-  Serial.print(" LedMode: ");
-  Serial.println(ledMode);
+  Serial.print(" X,Y,Z ");
+  Serial.print(eulerX);
+  Serial.print(" ");
+  Serial.print(eulerY);
+  Serial.print(" ");
+  Serial.print(eulerZ);
+  Serial.println("");
+
+  if (eulerZ < 45 && eulerZ > -20){
+    //Normal Drive Mode
+    simpleDrive(thrust, turn);
+    if (pidEnabled){
+      disablePID();
+    }
+  }
+  else if (eulerZ > 45 && eulerZ < 135){
+    //Balance Bot Mode;
+    if (!pidEnabled){
+      enablePID();
+    }
+    pidDrive(thrust);
+    pidBalance(turn);
+
+  }
+  else {
+    //Upside Down Mode
+    simpleDrive(thrust * -1, turn * -1);
+    if (pidEnabled){
+      disablePID();
+    }
+  }
 
 
-  pidDrive();
-  pidBalance();
+//  pidDrive();
+//  pidBalance();
   delay(10);
-
 
 }
 
 
-void pidBalance(){
-  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-  double currentAngle = euler.z();
+
+
+void pidBalance(int turn){
+  double currentAngle =  eulerZ -90;
   Input = currentAngle;
   myPID.Compute();
 
   int correctedOut = 0;
   if (Output > 0){
-    correctedOut = Output + 4;
+    correctedOut = Output + 40;
   }
   else if (Output < 0){
-    correctedOut = Output - 4;
+    correctedOut = Output - 40;
   }
   else {
     correctedOut = Output;
@@ -175,40 +207,21 @@ void pidBalance(){
   Serial.print(" dI: ");
   Serial.print(driveIn);
 
-  Serial.print(" RC State: ");
-  Serial.print(rc1);
-  Serial.print(" ");
-  Serial.print(rc2);
-  Serial.print(" ");
-  Serial.print(rc3);
-  Serial.print(" ");
-  Serial.print(rc4);
-  Serial.print(" ");
-  Serial.print(rc5);
-  Serial.print(" ");
-  Serial.print(rc6);
-  Serial.println(" ");
 
-  if (currentAngle > 60 || currentAngle < -60){
-    simpleDrive(0,0);
-    driveGoal = 0.0;
-    driveIn = 0.0; //Reset drive delta;
 
-  }
-  else {
-    if (rc1 < 5 && rc1 > -5){ //Don't apply drive corrections during steering
-      driveIn = driveIn + ((correctedOut * -1) / 1000.0);
+    if (turn < 5 && turn > -5){ //Don't apply drive corrections during steering
+      driveIn = driveIn + ((correctedOut ) / 400.0);
     } else {
-      driveIn = driveIn + (((correctedOut * -1) / 1000.0) / (rc1 / 2)); //Apply them slightly less depending on steering strength.
+      driveIn = driveIn + (((correctedOut ) / 400.0) / (turn / 2)); //Apply them slightly less depending on steering strength.
     }
-    simpleDrive((correctedOut * -1), rc1 * -1);
-  }
+    simpleDrive(correctedOut, turn );
+
 
 }
 
 
-void pidDrive(){
-  driveGoal = driveGoal + rc2/10;
+void pidDrive(int thrust){
+  driveGoal = driveGoal + thrust/10;
   if (driveGoal < -25){
     driveGoal = -25;
   }
@@ -246,6 +259,8 @@ void simpleDrive(double thrust, double turn){
   //This is where the turning logic is.. That's it.
   left = thrust + turn;
   right = thrust - turn;
+
+  right = right * -1; //Invert Right Drive motor
 
   //Safety checks!
   if (left > 255){
@@ -326,4 +341,25 @@ void updateChannels(){
       rc6 = 0;
     }
   }
+}
+
+
+void enablePID(){
+  driveGoal = 0;
+  Setpoint = 0;
+
+  myPID.SetMode(AUTOMATIC);
+  myPID.SetSampleTime(10);
+  drivePID.SetMode(AUTOMATIC);
+  drivePID.SetSampleTime(10);
+  pidEnabled = true;
+}
+void disablePID(){
+  driveGoal = 0;
+
+  myPID.SetMode(MANUAL);
+  myPID.SetSampleTime(10);
+  drivePID.SetMode(MANUAL);
+  drivePID.SetSampleTime(10);
+  pidEnabled = false;
 }
